@@ -1,18 +1,43 @@
 package client.service;
 
+import org.bouncycastle.jcajce.provider.BouncyCastleFipsProvider;
 import server.service.RegisterService;
 
 import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.PBEKeySpec;
-import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.security.NoSuchProviderException;
+import java.security.Security;
 import java.security.spec.InvalidKeySpecException;
 import java.util.HexFormat;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 public class RegisterClientService {
 
-    private RegisterService registerService;
+    private static final RegisterService registerService = new RegisterService();
+
+    public RegisterClientService() {
+        Security.addProvider(new BouncyCastleFipsProvider());
+        if (Security.getProvider("BCFIPS") == null) {
+            System.out.println("Bouncy Castle provider não disponível");
+        }
+    }
+
+    public boolean registerUser(String username, String password) {
+        var authToken = generateAuthToken(username, password);
+        // Sends authToken to server
+        registerService.registerUser(username, authToken);
+        return true;
+    }
+
+    public boolean loginUser(String username, String password) {
+        var authToken = generateAuthToken(username, password);
+        // Sends authToken to server
+        registerService.loginUser(username, authToken);
+        return true;
+    }
 
     // PBKDF2 token generation
     private String generateAuthToken(String username, String password) {
@@ -20,10 +45,10 @@ public class RegisterClientService {
         var spec = new PBEKeySpec(password.toCharArray(), salt, 1000, 128);
 
         try {
-            var pbkdf2 = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA512, BCFIPS");
+            var pbkdf2 = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA512", "BCFIPS");
             var sk = pbkdf2.generateSecret(spec);
             return HexFormat.of().formatHex(sk.getEncoded());
-        } catch (NoSuchAlgorithmException | InvalidKeySpecException e) {
+        } catch (NoSuchAlgorithmException | InvalidKeySpecException | NoSuchProviderException e) {
             throw new RuntimeException(e);
         }
     }
@@ -33,18 +58,10 @@ public class RegisterClientService {
 
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
-            return md.digest(nonHashedSalt.getBytes(StandardCharsets.UTF_8));
+            return md.digest(nonHashedSalt.getBytes(UTF_8));
         } catch (NoSuchAlgorithmException e) {
             throw new RuntimeException(e);
         }
-    }
-
-    public void saveUser(String username, String password) {
-        var authToken = generateAuthToken(username, password);
-        // Sends authToken to server
-        var totpSecret = registerService.saveUser(username, authToken);
-        System.out.println("Usuário registrado com sucesso.");
-        System.out.println("TOTP Secret: " + totpSecret);
     }
 
 }

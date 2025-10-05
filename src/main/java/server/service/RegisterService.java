@@ -1,32 +1,99 @@
 package server.service;
 
+import com.google.zxing.MultiFormatWriter;
+import com.google.zxing.WriterException;
+import com.google.zxing.client.j2se.MatrixToImageWriter;
+import com.google.zxing.common.BitMatrix;
 import com.lambdaworks.crypto.SCryptUtil;
+import de.taimos.totp.TOTP;
 import model.User;
+import org.apache.commons.codec.binary.Base32;
 
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
+import java.net.URLEncoder;
+import java.security.SecureRandom;
+import java.util.HashMap;
+import java.util.HexFormat;
+import java.util.Map;
+import java.util.Scanner;
+
+import static com.google.zxing.BarcodeFormat.QR_CODE;
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class RegisterService {
 
-    private final String FILE_NAME = "resources/users.txt";
+    private final String USERS_FILE = "users.ser";
+    private final String QRCODE_FILE = "matrixUrl.png";
+    private final Map<String, User> users;
 
-    // TODO: improve file handling to support multiple users
-    private User getUserFromFile(String username) {
-        User file = null;
+    public RegisterService() {
+        this.users = loadUsers();
+        System.out.println("Dados de usuários carregado. " + users.size() + " foram encontrados.");
+    }
 
-        try {
-            FileInputStream fileIn = new FileInputStream(FILE_NAME);
-            ObjectInputStream in = new ObjectInputStream(fileIn);
-            file = (User) in.readObject();
-        } catch (IOException e) {
-            System.err.println("Erro ao ler o arquivo: " + e.getMessage());
-        } catch (ClassNotFoundException c) {
-            System.err.println("Falha na autenticação.");
+    public void registerUser(String username, String authToken) {
+        if (users.containsKey(username)) {
+            System.err.println("Usuário já cadastrado.");
+            throw new RuntimeException();
         }
-        return (User) file;
+
+        var scryptToken = generateScryptToken(authToken);
+        var totpSecretKey = generateSecretKey();
+        var user = new User();
+
+        user.setUsername(username);
+        user.setScryptToken(scryptToken);
+        user.setTotpSecretKey(totpSecretKey);
+        users.put(user.getUsername(), user);
+        saveUsers();
+
+        System.out.println("Usuário registrado com sucesso.");
+        System.out.println("Google Auth URL: " + getGoogleAuthenticatorBarCode(user.getUsername(), user.getTotpSecretKey()));
+    }
+
+    public void loginUser(String username, String authToken) {
+        var user = users.get(username);
+
+        if (user.equals(null)) throw new RuntimeException();
+
+        var scryptToken = generateScryptToken(authToken);
+        var storagedToken = user.getScryptToken();
+
+        if (!scryptToken.equals(storagedToken)) throw new RuntimeException();
+
+        System.out.println("Insira o código de autenticação.");
+        var scanner = new Scanner(System.in);
+        var code = scanner.nextLine();
+
+        if (!code.equals(getTotpCode(user.getTotpSecretKey()))) throw new RuntimeException();
+
+        System.out.println("Usuário autenticado com sucesso");
+    }
+
+    private void saveUsers() {
+        try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(USERS_FILE))) {
+            oos.writeObject(users);
+            System.out.println(users.size() + " usuários foram salvos com sucesso em: " + USERS_FILE);
+        } catch (IOException e) {
+            System.err.println("Erro ao salvar dados de usuários: " + e.getMessage());
+        }
+    }
+
+    private Map<String, User> loadUsers() {
+        try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(USERS_FILE))) {
+            return (Map<String, User>) ois.readObject();
+        } catch (FileNotFoundException e) {
+            System.out.println("Arquivo de dados de usuários não encontrado. Criando novo arquivo...");
+            return new HashMap<>();
+        } catch (IOException | ClassNotFoundException e) {
+            System.err.println("Erro ao ler dados de usuários: " + e.getMessage());
+            return new HashMap<>();
+        }
     }
 
     // Scrypt token generation
@@ -38,40 +105,48 @@ public class RegisterService {
         return SCryptUtil.scrypt(authToken, cost, blockSize, parallelization);
     }
 
-    // TODO: Logic to generate a TOTP secret
-    private String generateTOTPSecret() {
-        return "";
+    // 2-Factor Authentication
+    private String generateSecretKey() {
+        SecureRandom random = new SecureRandom();
+        byte[] bytes = new byte[20];
+        random.nextBytes(bytes);
+        Base32 base32 = new Base32();
+        return base32.encodeToString(bytes);
     }
 
-    public String saveUser(String username, String authToken) {
-        var scryptToken = generateScryptToken(authToken);
-        var user = new User();
+    private String getTotpCode(String secretKey) {
+        Base32 base32 = new Base32();
+        byte[] bytes = base32.decode(secretKey);
+        String hexKey = HexFormat.of().formatHex(bytes);
+        return TOTP.getOTP(hexKey);
+    }
 
-        user.setUsername(username);
-        user.setScryptToken(scryptToken);
+    private String getGoogleAuthenticatorBarCode(String account, String secretKey) {
+        var issuer = "ine5680";
+        System.out.println("Secret Key:" + secretKey);
 
-        // TODO: improve file handling to support multiple users
-        try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(FILE_NAME))) {
-            oos.writeObject(user);
-            System.out.println("Registo do usuário realizado no arquivo " + FILE_NAME);
-        } catch (IOException e) {
-            System.err.println("Erro no registro do usuário: " + e.getMessage());
+        var barCode = "otpauth://totp/"
+                + URLEncoder.encode(issuer + ":" + account, UTF_8).replace("+", "%20")
+                + "?secret=" + URLEncoder.encode(secretKey, UTF_8).replace("+", "%20")
+                + "&issuer=" + URLEncoder.encode(issuer, UTF_8).replace("+", "%20");
+
+        createQrCode(barCode);
+        return barCode;
+    }
+
+    private void createQrCode(String barCodeData) {
+        var width = 246;
+        var height = 246;
+
+        try {
+            BitMatrix matrix = new MultiFormatWriter().encode(barCodeData, QR_CODE, width, height);
+            FileOutputStream out = new FileOutputStream(QRCODE_FILE);
+            MatrixToImageWriter.writeToStream(matrix, "png", out);
+        } catch (WriterException | IOException e) {
+            throw new RuntimeException(e);
         }
 
-        var totpSecret = generateTOTPSecret();
-        // TODO: save TOTP secret into a file
-
-        return totpSecret;
-    }
-
-    public void loginUser(String username, String authToken) {
-        var user = getUserFromFile(username);
-        var scryptToken = generateScryptToken(authToken);
-        var storagedToken = user.getScryptToken();
-
-        if (!scryptToken.equals(storagedToken)) System.err.println("Falha na autenticação");
-
-        System.out.println("Usuário autenticado com sucesso");
+        System.out.println("QR code para ativação da 2FA criado no arquivo: " + QRCODE_FILE);
     }
 
 }

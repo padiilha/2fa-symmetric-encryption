@@ -1,9 +1,15 @@
 package model;
 
-public class User {
+import java.io.Serial;
+import java.io.Serializable;
 
+public class User implements Serializable {
+
+    @Serial
+    private static final long serialVersionUID = 1L;
     private String username;
     private String scryptToken;
+    private String totpSecret;
 
     public User() {}
 
@@ -21,6 +27,14 @@ public class User {
 
     public void setScryptToken(String scryptToken) {
         this.scryptToken = scryptToken;
+    }
+
+    public String getTotpSecretKey() {
+        return totpSecret;
+    }
+
+    public void setTotpSecretKey(String totpSecret) {
+        this.totpSecret = totpSecret;
     }
 
 }
