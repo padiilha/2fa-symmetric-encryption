@@ -4,10 +4,11 @@ import com.google.zxing.MultiFormatWriter;
 import com.google.zxing.WriterException;
 import com.google.zxing.client.j2se.MatrixToImageWriter;
 import com.google.zxing.common.BitMatrix;
-import com.lambdaworks.crypto.SCryptUtil;
 import de.taimos.totp.TOTP;
 import model.User;
 import org.apache.commons.codec.binary.Base32;
+import org.bouncycastle.crypto.KDFCalculator;
+import org.bouncycastle.crypto.fips.Scrypt;
 
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
@@ -16,6 +17,8 @@ import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.URLEncoder;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.util.HashMap;
 import java.util.HexFormat;
@@ -24,6 +27,7 @@ import java.util.Scanner;
 
 import static com.google.zxing.BarcodeFormat.QR_CODE;
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.bouncycastle.util.Strings.toUTF8ByteArray;
 
 public class RegisterService {
 
@@ -42,7 +46,7 @@ public class RegisterService {
             throw new RuntimeException();
         }
 
-        var scryptToken = generateScryptToken(authToken);
+        var scryptToken = generateScryptToken(username, authToken);
         var totpSecretKey = generateSecretKey();
         var user = new User();
 
@@ -61,7 +65,7 @@ public class RegisterService {
 
         if (user.equals(null)) throw new RuntimeException();
 
-        var scryptToken = generateScryptToken(authToken);
+        var scryptToken = generateScryptToken(username, authToken);
         var storagedToken = user.getScryptToken();
 
         if (!scryptToken.equals(storagedToken)) throw new RuntimeException();
@@ -97,12 +101,29 @@ public class RegisterService {
     }
 
     // Scrypt token generation
-    private String generateScryptToken(String authToken) {
+    private String generateScryptToken(String username, String authToken) {
+        var salt = getSalt(username, authToken);
         var cost = 16384;
         var blockSize = 8;
         var parallelization = 1;
 
-        return SCryptUtil.scrypt(authToken, cost, blockSize, parallelization);
+        KDFCalculator<Scrypt.Parameters> calculator = new Scrypt.KDFFactory()
+                .createKDFCalculator(Scrypt.ALGORITHM.using(salt, cost, blockSize, parallelization, toUTF8ByteArray(authToken)));
+
+        byte[] output = new byte[32];
+        calculator.generateBytes(output);
+        return HexFormat.of().formatHex(output);
+    }
+
+    private byte[] getSalt(String username, String authToken) {
+        var nonHashedSalt = username + authToken;
+
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            return md.digest(nonHashedSalt.getBytes(UTF_8));
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     // 2-Factor Authentication
