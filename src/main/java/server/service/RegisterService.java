@@ -37,7 +37,7 @@ public class RegisterService {
 
     public RegisterService() {
         this.users = loadUsers();
-        System.out.println("Dados de usuários carregado. " + users.size() + " foram encontrados.");
+        System.out.println("Dados de usuários carregados. " + users.size() + " foram encontrados.");
     }
 
     public void registerUser(String username, String authToken) {

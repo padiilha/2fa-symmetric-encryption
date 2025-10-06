@@ -34,8 +34,8 @@ public class Application {
         option = scanner.nextLine();
 
         switch (option) {
-            case "1" -> fileClientService.saveFile();
-            case "2" -> fileClientService.retrieveFile();
+            case "1" -> fileClientService.uploadFile(username);
+            case "2" -> fileClientService.downloadFile(username);
         }
     }
 
